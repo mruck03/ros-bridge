@@ -235,7 +235,7 @@ class CarlaToRosWaypointConverter(CompatibleNode):
                 "/carla/world_info",
                 CarlaWorldInfo,
                 qos_profile=QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
-                timeout=15.0)
+                timeout=50.0)
         except ROSException as e:
             self.logerr("Error while waiting for world info: {}".format(e))
             raise e

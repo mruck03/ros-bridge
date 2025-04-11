@@ -26,6 +26,9 @@ from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import Float64
 from visualization_msgs.msg import Marker
 
+import tf2_ros
+import rospy
+from geometry_msgs.msg import Pose
 
 class LocalPlanner(CompatibleNode):
     """
@@ -39,12 +42,12 @@ class LocalPlanner(CompatibleNode):
 
     # minimum distance to target waypoint as a percentage (e.g. within 90% of
     # total distance)
-    MIN_DISTANCE_PERCENTAGE = 0.9
+    MIN_DISTANCE_PERCENTAGE = 0.5
 
     def __init__(self):
         super(LocalPlanner, self).__init__("local_planner")
 
-        role_name = self.get_param("role_name", "ego_vehicle")
+        self.role_name = self.get_param("role_name", "ego_vehicle")
         self.control_time_step = self.get_param("control_time_step", 0.05)
 
         args_lateral_dict = {}
@@ -70,37 +73,54 @@ class LocalPlanner(CompatibleNode):
         # subscribers
         self._odometry_subscriber = self.new_subscription(
             Odometry,
-            "/carla/{}/odometry".format(role_name),
+            "/carla/{}/odometry".format(self.role_name),
             self.odometry_cb,
             qos_profile=10)
         self._path_subscriber = self.new_subscription(
             Path,
-            "/carla/{}/waypoints".format(role_name),
+            "/carla/{}/waypoints".format(self.role_name),
             self.path_cb,
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self._target_speed_subscriber = self.new_subscription(
             Float64,
-            "/carla/{}/speed_command".format(role_name),
+            "/carla/{}/speed_command".format(self.role_name),
             self.target_speed_cb,
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
         # publishers
         self._target_pose_publisher = self.new_publisher(
             Marker,
-            "/carla/{}/next_target".format(role_name),
+            "/carla/{}/next_target".format(self.role_name),
             qos_profile=10)
         self._control_cmd_publisher = self.new_publisher(
             CarlaEgoVehicleControl,
-            "/carla/{}/vehicle_control_cmd".format(role_name),
+            "/carla/{}/vehicle_control_cmd".format(self.role_name),
             qos_profile=10)
 
         # initializing controller
         self._vehicle_controller = VehiclePIDController(
             self, args_lateral=args_lateral_dict, args_longitudinal=args_longitudinal_dict)
+        
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
     def odometry_cb(self, odometry_msg):
         with self.data_lock:
-            self._current_pose = odometry_msg.pose.pose
+            # self._current_pose = odometry_msg.pose.pose
+            trans = self.tf_buffer.lookup_transform(
+                "map",  # global frame
+                "{}".format(self.role_name),  # rear axle frame
+                rospy.Time(0),  # latest available
+                rospy.Duration(1.0)  # timeout
+            )
+            pose = Pose()
+            pose.position.x = trans.transform.translation.x
+            pose.position.y = trans.transform.translation.y
+            pose.position.z = trans.transform.translation.z
+
+            pose.orientation = trans.transform.rotation
+
+            self._current_pose = pose
             self._current_speed = math.sqrt(odometry_msg.twist.twist.linear.x ** 2 +
                                             odometry_msg.twist.twist.linear.y ** 2 +
                                             odometry_msg.twist.twist.linear.z ** 2) * 3.6
